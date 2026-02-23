@@ -22,6 +22,7 @@ WangScript là script hack Roblox đa năng, hỗ trợ GUI đẹp với pill sw
 1. Paste loadstring vào executor:
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/wangcaos/Wangscript/main/Main.lua"))()
+
 2.Nhấn Right Ctrl để mở/đóng GUI.
 3.Bật/tắt tính năng bằng pill switch hoặc lệnh chat (ví dụ: .fly, .aimbot, .killaura).
 Update
