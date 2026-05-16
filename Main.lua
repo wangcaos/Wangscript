@@ -1,503 +1,578 @@
--- WangScript v2.4 FULL - Phần 1: Biến, Drawing, ESP/Trace
--- Right Ctrl mở GUI | Alt acc only!
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local StarterGui = game:GetService("StarterGui")
-local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 
--- States & Keys
-local states = {
-    Fly = false, Noclip = false, ESP = false, Trace = false,
-    Aimbot = false, SilentAim = false, Invisible = false, Bypass = false,
-    KillAura = false, Speed = false, Illusion = false
-}
-local keys = {
-    Fly = Enum.KeyCode.X, Noclip = Enum.KeyCode.N, ESP = Enum.KeyCode.V,
-    Trace = Enum.KeyCode.B, Aimbot = Enum.KeyCode.C, SilentAim = Enum.KeyCode.Z,
-    Invisible = Enum.KeyCode.I, KillAura = Enum.KeyCode.K, Speed = Enum.KeyCode.Q,
-    Illusion = Enum.KeyCode.L
-}
-local config = {
-    FlySpeed = 50,
-    WalkSpeed = 100,
-    AimbotSmoothness = 0.12,
-    AimbotPrediction = 0.165,
-    AimbotFOV = 150,
-    KillAuraRange = 6,
-    KillAuraDamage = 10
+-- === HỆ THỐNG CẤU HÌNH SONG SONG PC & MOBILE ===
+local Config = {
+    Aimbot_Enabled = false,
+    AimbotMode = "None",
+    FOV_Enabled = false,   
+    ESP_Enabled = false,   
+    Chams_Enabled = false, 
+    FOV_Radius = 130,      
+    SnapSpeed = 0.35,
+    SwitchDelay = 0.4,
+    FillTransparency = 0.8
 }
 
-local flying = false
-local aiming = false
-local guivisible = false
-local bindingFeature = nil
-local BodyVelocity, BodyAngularVelocity, noclipConn
-local ESP_Boxes, Tracers = {}, {}
-local bypassActive = false
-local illusionShadows = {}
+local CurrentTarget = nil
+local TargetStartTime = 0
+local ESP_Data = {}
 
--- Drawing
-local fovCircle = Drawing.new("Circle")
-fovCircle.NumSides = 100; fovCircle.Thickness = 2; fovCircle.Filled = false
-fovCircle.Transparency = 0.7; fovCircle.Color = Color3.fromRGB(255,100,100)
-fovCircle.Radius = config.AimbotFOV; fovCircle.Visible = false
-
-local lockHighlight = Drawing.new("Square")
-lockHighlight.Thickness = 4; lockHighlight.Color = Color3.fromRGB(0,255,80); lockHighlight.Filled = false
-lockHighlight.Transparency = 1; lockHighlight.Visible = false
-
--- Notification
-local function notify(title, text, duration)
-    StarterGui:SetCore("SendNotification", {
-        Title = title,
-        Text = text,
-        Duration = duration or 3
-    })
-end
-
--- Remove health bars
-workspace.DescendantAdded:Connect(function(obj)
-    task.wait()
-    if obj.Name == "Health" and obj.Parent:IsA("BillboardGui") then obj.Parent:Destroy() end
+-- Kiểm tra phân vùng hiển thị UI an toàn cho cả PC và Điện thoại
+local ParentGui = game:GetService("CoreGui")
+pcall(function()
+    if gethui then ParentGui = gethui() end
 end)
 
--- ESP
-local function addESP(target)
-    if target == player then return end
-    local drawings = {
-        box = Drawing.new("Square"),
-        healthBg = Drawing.new("Line"),
-        healthBar = Drawing.new("Line")
-    }
-    drawings.box.Thickness = 3; drawings.box.Color = Color3.new(1,0,0); drawings.box.Filled = false; drawings.box.Transparency = 1
-    drawings.healthBg.Thickness = 4; drawings.healthBg.Color = Color3.new(0,0,0); drawings.healthBg.Transparency = 0.5
-    drawings.healthBar.Thickness = 4; drawings.healthBar.Color = Color3.new(0,1,0); drawings.healthBar.Transparency = 1
-    ESP_Boxes[target] = drawings
-
-    RunService.RenderStepped:Connect(function()
-        local char = target.Character
-        if not char or not char:FindFirstChild("HumanoidRootPart") then
-            for _, d in pairs(drawings) do d:Remove() end
-            ESP_Boxes[target] = nil
-            return
-        end
-
-        local rootPos, onScreen = camera:WorldToViewportPoint(char.HumanoidRootPart.Position)
-        if onScreen then
-            local headPos = camera:WorldToViewportPoint(char.Head.Position)
-            local legPos = camera:WorldToViewportPoint(char.HumanoidRootPart.Position - Vector3.new(0,4,0))
-            local boxHeight = math.clamp(math.abs(headPos.Y - legPos.Y), 20, 300)
-            local boxWidth = boxHeight * 0.45
-
-            drawings.box.Size = Vector2.new(boxWidth, boxHeight)
-            drawings.box.Position = Vector2.new(rootPos.X - boxWidth/2, rootPos.Y - boxHeight/2)
-            drawings.box.Visible = true
-
-            local barX = rootPos.X - boxWidth/2 - 6
-            local barY = legPos.Y
-            drawings.healthBg.From = Vector2.new(barX, barY)
-            drawings.healthBg.To = Vector2.new(barX + 4, barY)
-            drawings.healthBg.Visible = true
-
-            local pct = char.Humanoid.Health / char.Humanoid.MaxHealth
-            drawings.healthBar.From = Vector2.new(barX, barY)
-            drawings.healthBar.To = Vector2.new(barX + 4 * pct, barY)
-            drawings.healthBar.Visible = true
-        else
-            drawings.box.Visible = false
-            drawings.healthBg.Visible = false
-            drawings.healthBar.Visible = false
-        end
-    end)
+if ParentGui:FindFirstChild("GH_ClassicModMenu") then
+    ParentGui["GH_ClassicModMenu"]:Destroy()
 end
 
--- Trace
-local function addTrace(target)
-    if target == player then return end
-    local line = Drawing.new("Line")
-    line.Thickness = 2; line.Color = Color3.new(1,0,0); line.Transparency = 0.5; line.Visible = false
-    Tracers[target] = line
-
-    RunService.RenderStepped:Connect(function()
-        local char = target.Character
-        if not char or not char:FindFirstChild("HumanoidRootPart") then line:Remove(); Tracers[target] = nil; return end
-        local pos, onScreen = camera:WorldToViewportPoint(char.HumanoidRootPart.Position)
-        if onScreen then
-            line.From = Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y)
-            line.To = Vector2.new(pos.X, pos.Y)
-            line.Visible = true
-        else line.Visible = false end
-    end)
-end
--- WangScript v2.4 - Phần 2: Fly, Speed, Illusion, Noclip
-
--- Fly
-local function toggleFly(enable)
-    flying = enable
-    local char = player.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-    local root = char.HumanoidRootPart
-    if enable then
-        BodyVelocity = Instance.new("BodyVelocity", root); BodyVelocity.MaxForce = Vector3.new(4e5,4e5,4e5)
-        BodyAngularVelocity = Instance.new("BodyAngularVelocity", root); BodyAngularVelocity.MaxTorque = Vector3.new(4e5,4e5,4e5)
-    else
-        if BodyVelocity then BodyVelocity:Destroy() end
-        if BodyAngularVelocity then BodyAngularVelocity:Destroy() end
-    end
-    notify("Fly", enable and "BẬT" or "TẮT", 3)
-end
-
-RunService.Heartbeat:Connect(function()
-    if flying and BodyVelocity then
-        local move = Vector3.new()
-        local cf = camera.CFrame
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then move += cf.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then move -= cf.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then move -= cf.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then move += cf.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0,1,0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.new(0,1,0) end
-        BodyVelocity.Velocity = move * config.FlySpeed
-    end
-end)
-
--- Speed Hack
-local function toggleSpeed(enable)
-    states.Speed = enable
-    if enable and player.Character then
-        local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            humanoid.WalkSpeed = config.WalkSpeed
-            humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-                humanoid.WalkSpeed = config.WalkSpeed
+-- === THUẬT TOÁN KÉO VUỐT ĐA ĐIỂM (HỖ TRỢ CHUỘT PC & CẢM ỨNG ĐIỆN THOẠI) ===
+local function DynamicDrag(guiObject)
+    local dragging, dragInput, dragStart, startPos
+    
+    guiObject.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = guiObject.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
             end)
         end
-        notify("Speed", "BẬT - " .. config.WalkSpeed, 3)
-    else
-        local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid then humanoid.WalkSpeed = 16 end
-        notify("Speed", "TẮT", 3)
-    end
-end
-
--- Illusion Shadow (Naoya JJK style)
-local function toggleIllusion(enable)
-    states.Illusion = enable
-    if enable then
-        RunService.Heartbeat:Connect(function()
-            if states.Illusion and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                local root = player.Character.HumanoidRootPart
-                if root.Velocity.Magnitude > 1 then
-                    local shadow = player.Character:Clone()
-                    shadow.Parent = workspace
-                    shadow.HumanoidRootPart.CFrame = root.CFrame
-                    shadow.Humanoid:Destroy()
-                    for _, part in pairs(shadow:GetDescendants()) do
-                        if part:IsA("BasePart") then
-                            part.Transparency = 0.5
-                            part.Anchored = true
-                            part.CanCollide = false
-                        end
-                    end
-                    table.insert(illusionShadows, shadow)
-                    task.delay(0.5, function()
-                        if shadow and shadow.Parent then shadow:Destroy() end
-                    end)
-                end
-            end
-        end)
-        notify("Illusion Shadow", "BẬT", 3)
-    else
-        notify("Illusion Shadow", "TẮT", 3)
-    end
-end
-
--- Noclip
-local function toggleNoclip(enable)
-    if noclipConn then noclipConn:Disconnect() end
-    if enable and player.Character then
-        noclipConn = RunService.Stepped:Connect(function()
-            for _, part in player.Character:GetDescendants() do
-                if part:IsA("BasePart") then part.CanCollide = false end
-            end
-        end)
-    end
-    notify("Noclip", enable and "BẬT" or "TẮT", 3)
-end
--- WangScript v2.4 - Phần 3: Aimbot, Silent Aim, Invisible, KillAura
-
--- Aimbot
-local function getClosest()
-    local closest, minDist = nil, config.AimbotFOV
-    local mouseLoc = UserInputService:GetMouseLocation()
-    for _, p in Players:GetPlayers() do
-        if p \~= player and p.Character and p.Character:FindFirstChild("Head") and p.Character.Humanoid.Health > 0 then
-            local headPos, onScreen = camera:WorldToViewportPoint(p.Character.Head.Position)
-            if onScreen then
-                local dist = (Vector2.new(headPos.X, headPos.Y) - mouseLoc).Magnitude
-                if dist < minDist then minDist = dist; closest = p.Character end
-            end
+    end)
+    
+    guiObject.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
         end
-    end
-    return closest
-end
-
-RunService.RenderStepped:Connect(function(dt)
-    fovCircle.Position = UserInputService:GetMouseLocation()
-    fovCircle.Radius = config.AimbotFOV
-    fovCircle.Visible = states.Aimbot
-    lockHighlight.Visible = false
-
-    if states.Aimbot and aiming then
-        local target = getClosest()
-        if target then
-            local predPos = target.Head.Position + (target.HumanoidRootPart.Velocity * config.AimbotPrediction)
-            local targetCF = CFrame.lookAt(camera.CFrame.Position, predPos)
-            camera.CFrame = camera.CFrame:Lerp(targetCF, config.AimbotSmoothness * dt * 60)
-
-            local rootPos, onScreen = camera:WorldToViewportPoint(target.HumanoidRootPart.Position)
-            if onScreen then
-                local headPos = camera:WorldToViewportPoint(target.Head.Position)
-                local legPos = camera:WorldToViewportPoint(target.HumanoidRootPart.Position - Vector3.new(0, 4, 0))
-                local boxHeight = math.clamp(math.abs(headPos.Y - legPos.Y), 20, 300)
-                local boxWidth = boxHeight * 0.45
-
-                lockHighlight.Size = Vector2.new(boxWidth, boxHeight)
-                lockHighlight.Position = Vector2.new(rootPos.X - boxWidth / 2, rootPos.Y - boxHeight / 2)
-                lockHighlight.Visible = true
-            end
-        end
-    end
-end)
-
--- Silent Aim
-local mt = getrawmetatable(game)
-local oldnc = mt.__namecall
-setreadonly(mt, false)
-mt.__namecall = function(self, ...)
-    local args = {...}
-    if states.SilentAim and self:IsA("RemoteEvent") and getnamecallmethod() == "FireServer" and (self.Name:lower():find("aim") or self.Name:lower():find("shoot") or self.Name:lower():find("fire")) then
-        local target = getClosest()
-        if target then
-            args[2] = target.Head.Position + (target.HumanoidRootPart.Velocity * config.AimbotPrediction)
-            args[3] = target.Head
-        end
-    end
-    return oldnc(self, unpack(args))
-end
-setreadonly(mt, true)
-
--- Invisible FE
-local function toggleInvisible(enable)
-    local char = player.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-    local hrp = char.HumanoidRootPart
-    if enable then
-        hrp.CFrame = hrp.CFrame + Vector3.new(0, 10000, 0)
-        task.wait(0.1)
-        for _, obj in char:GetDescendants() do
-            if obj:IsA("BasePart") or obj:IsA("MeshPart") then obj.LocalTransparencyModifier = 0 end
-        end
-        notify("Invisible", "BẬT", 3)
-    else
-        hrp.CFrame = workspace.SpawnLocation.CFrame + Vector3.new(0, 5, 0) or hrp.CFrame - Vector3.new(0, 10000, 0)
-        notify("Invisible", "TẮT", 3)
-    end
-end
-
--- KillAura
-local function toggleKillAura(enable)
-    states.KillAura = enable
-    if enable then
-        RunService.Heartbeat:Connect(function()
-            if states.KillAura and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                local hrp = player.Character.HumanoidRootPart
-                for _, obj in workspace:GetChildren() do
-                    if obj:FindFirstChild("Humanoid") and obj.Humanoid.Health > 0 and obj \~= player.Character then
-                        local dist = (obj.HumanoidRootPart.Position - hrp.Position).Magnitude
-                        if dist <= config.KillAuraRange then
-                            obj.Humanoid:TakeDamage(config.KillAuraDamage)
-                        end
-                    end
-                end
-            end
-        end)
-        notify("KillAura", "BẬT - Range: " .. config.KillAuraRange, 3)
-    else
-        notify("KillAura", "TẮT", 3)
-    end
-end
--- WangScript v2.4 - Phần 4: GUI, Tab, Slider, Bind, Lệnh chat
-
--- Pill Switch mượt
-local function createToggle(parent, initialOn, callback)
-    local frame = Instance.new("Frame", parent)
-    frame.Size = UDim2.new(0, 80, 0, 35)
-    frame.BackgroundColor3 = initialOn and Color3.fromRGB(0, 200, 80) or Color3.fromRGB(80, 80, 80)
-    frame.BorderSizePixel = 0
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(1, 0)
-
-    local knob = Instance.new("Frame", frame)
-    knob.Size = UDim2.new(0, 30, 0, 30)
-    knob.Position = initialOn and UDim2.new(1, -34, 0.5, -15) or UDim2.new(0, 3, 0.5, -15)
-    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    knob.BorderSizePixel = 0
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
-
-    local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    local isOn = initialOn
-
-    frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            isOn = not isOn
-            callback(isOn)
-            TweenService:Create(frame, tweenInfo, {BackgroundColor3 = isOn and Color3.fromRGB(0, 200, 80) or Color3.fromRGB(80, 80, 80)}):Play()
-            TweenService:Create(knob, tweenInfo, {Position = isOn and UDim2.new(1, -34, 0.5, -15) or UDim2.new(0, 3, 0.5, -15)}):Play()
+    end)
+    
+    RunService.RenderStepped:Connect(function()
+        if dragging and dragInput then
+            local delta = dragInput.Position - dragStart
+            guiObject.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
         end
     end)
 end
 
--- GUI
-local sg = Instance.new("ScreenGui", game.CoreGui)
-sg.Name = "WangScript"
-sg.ResetOnSpawn = false
+-- === KHỞI TẠO FRAME GIAO DIỆN PHÙ HỢP CẢ HAI NỀN TẢNG ===
+local ScreenGui = Instance.new("ScreenGui", ParentGui)
+ScreenGui.Name = "GH_ClassicModMenu"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
 
-local mainFrame = Instance.new("Frame", sg)
-mainFrame.Size = UDim2.new(0, 600, 0, 450)
-mainFrame.Position = UDim2.new(0.5, -300, 0.5, -225)
-mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-mainFrame.BorderSizePixel = 0
-mainFrame.Visible = false
-Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 10)
+-- Nút tròn nổi "GH" (Ẩn/Hiện Menu nhanh trên Điện thoại, PC vẫn dùng được)
+local MobileToggleBtn = Instance.new("TextButton", ScreenGui)
+MobileToggleBtn.Name = "MobileToggleBtn"
+MobileToggleBtn.Size = UDim2.new(0, 45, 0, 45)
+MobileToggleBtn.Position = UDim2.new(0, 15, 0.4, 0)
+MobileToggleBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+MobileToggleBtn.Text = "GH"
+MobileToggleBtn.TextColor3 = Color3.fromRGB(100, 255, 100)
+MobileToggleBtn.Font = Enum.Font.SourceSansBold
+MobileToggleBtn.TextSize = 18
+MobileToggleBtn.ZIndex = 20
+Instance.new("UICorner", MobileToggleBtn).CornerRadius = UDim.new(1, 0)
+local ButtonStroke = Instance.new("UIStroke", MobileToggleBtn)
+ButtonStroke.Color = Color3.fromRGB(100, 255, 100)
+ButtonStroke.Thickness = 1.5
 
--- Title Bar
-local titleBar = Instance.new("Frame", mainFrame)
-titleBar.Size = UDim2.new(1, 0, 0, 50)
-titleBar.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-local title = Instance.new("TextLabel", titleBar)
-title.Size = UDim2.new(1, 0, 1, 0)
-title.BackgroundTransparency = 1
-title.Text = "wangscript v2.4"
-title.TextColor3 = Color3.fromRGB(200, 200, 255)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 24
+DynamicDrag(MobileToggleBtn)
 
--- Tab Bar
-local tabBar = Instance.new("Frame", mainFrame)
-tabBar.Size = UDim2.new(1, 0, 0, 50)
-tabBar.Position = UDim2.new(0, 0, 0, 50)
-tabBar.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-local tabNames = {"Combat", "Movement", "Player", "Misc"}
-local tabContents = {}
+local MainFrame = Instance.new("Frame", ScreenGui)
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 320, 0, 265)
+MainFrame.Position = UDim2.new(0.5, -160, 0.5, -132)
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Visible = true
 
-for i, name in ipairs(tabNames) do
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1/#tabNames, -8, 1, -8)
-    btn.Position = UDim2.new((i-1)/#tabNames, 4, 0, 4)
-    btn.BackgroundColor3 = (i == 1) and Color3.fromRGB(60, 60, 100) or Color3.fromRGB(35, 35, 50)
-    btn.Text = name
-    btn.TextColor3 = Color3.fromRGB(200, 200, 220)
-    btn.Font = Enum.Font.GothamSemibold
-    btn.TextSize = 16
-    btn.BorderSizePixel = 0
-    btn.Parent = tabBar
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+local Stroke = Instance.new("UIStroke", MainFrame)
+Stroke.Color = Color3.fromRGB(50, 50, 50)
+Stroke.Thickness = 1
 
-    local content = Instance.new("ScrollingFrame")
-    content.Size = UDim2.new(1, -20, 1, -80)
-    content.Position = UDim2.new(0, 10, 0, 100)
-    content.BackgroundTransparency = 1
-    content.ScrollBarThickness = 4
-    content.Visible = (i == 1)
-    content.Parent = mainFrame
-    Instance.new("UIListLayout", content).Padding = UDim.new(0, 10)
+MobileToggleBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
 
-    tabContents[name] = content
+local TitleBar = Instance.new("Frame", MainFrame)
+TitleBar.Name = "TitleBar"
+TitleBar.Size = UDim2.new(1, 0, 0, 24)
+TitleBar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+TitleBar.BorderSizePixel = 0
+
+DynamicDrag(MainFrame)
+local TitleText = Instance.new("TextLabel", TitleBar)
+TitleText.Text = "  wangcaos script"
+TitleText.TextColor3 = Color3.new(1, 1, 1)
+TitleText.Font = Enum.Font.SourceSansBold
+TitleText.TextSize = 14
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Size = UDim2.new(1, -50, 1, 0)
+TitleText.BackgroundTransparency = 1
+
+local Controls = Instance.new("Frame", TitleBar)
+Controls.Name = "Controls"
+Controls.Size = UDim2.new(0, 46, 0, 20)
+Controls.Position = UDim2.new(1, -48, 0, 2)
+Controls.BackgroundTransparency = 1
+
+local CloseBtn = Instance.new("TextButton", Controls)
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.new(1, 1, 1)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(255, 75, 75)
+CloseBtn.Font = Enum.Font.SourceSansBold
+CloseBtn.TextSize = 16
+CloseBtn.Size = UDim2.new(0, 20, 0, 20)
+CloseBtn.BorderSizePixel = 0
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 4)
+CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+
+local Content = Instance.new("Frame", MainFrame)
+Content.Name = "Content"
+Content.Size = UDim2.new(1, -20, 1, -34)
+Content.Position = UDim2.new(0, 10, 0, 29)
+Content.BackgroundTransparency = 1
+
+local ListLayout = Instance.new("UIListLayout", Content)
+ListLayout.Padding = UDim.new(0, 8)
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- [HÀNG 1]: AIMBOT + MENU THẢ CHỌN CHẾ ĐỘ CHƠI
+local AimFrame = Instance.new("Frame", Content)
+AimFrame.Size = UDim2.new(1, 0, 0, 24)
+AimFrame.BackgroundTransparency = 1
+AimFrame.LayoutOrder = 1
+
+local AimBox = Instance.new("TextButton", AimFrame)
+AimBox.Size = UDim2.new(0, 14, 0, 14)
+AimBox.Position = UDim2.new(0, 0, 0.5, -7)
+AimBox.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+AimBox.BorderSizePixel = 0
+AimBox.Text = ""
+Instance.new("UICorner", AimBox).CornerRadius = UDim.new(0, 4)
+AimBox.BackgroundTransparency = 0.8
+
+local AimLabel = Instance.new("TextLabel", AimFrame)
+AimLabel.Text = "Aimbot"
+AimLabel.TextColor3 = Color3.new(1, 1, 1)
+AimLabel.Font = Enum.Font.SourceSansBold
+AimLabel.TextSize = 14
+AimLabel.TextXAlignment = Enum.TextXAlignment.Left
+AimLabel.Size = UDim2.new(0, 60, 1, 0)
+AimLabel.Position = UDim2.new(0, 20, 0, 0)
+AimLabel.BackgroundTransparency = 1
+
+local DropBtn = Instance.new("TextButton", AimFrame)
+DropBtn.Size = UDim2.new(0, 100, 0, 20)
+DropBtn.Position = UDim2.new(0, 85, 0.5, -10)
+DropBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+DropBtn.Text = "None  ▼"
+DropBtn.TextColor3 = Color3.new(1, 1, 1)
+DropBtn.Font = Enum.Font.SourceSans
+DropBtn.TextSize = 12
+Instance.new("UICorner", DropBtn).CornerRadius = UDim.new(0, 4)
+local DropStroke = Instance.new("UIStroke", DropBtn)
+DropStroke.Color = Color3.fromRGB(50, 50, 50)
+
+AimBox.MouseButton1Click:Connect(function()
+    Config.Aimbot_Enabled = not Config.Aimbot_Enabled
+    AimBox.BackgroundTransparency = Config.Aimbot_Enabled and 0 or 0.8
+end)
+
+local DropMenu = Instance.new("Frame", ScreenGui)
+DropMenu.Size = UDim2.new(0, 100, 0, 92)
+DropMenu.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+DropMenu.Visible = false
+DropMenu.BorderSizePixel = 0
+DropMenu.ZIndex = 15
+Instance.new("UICorner", DropMenu).CornerRadius = UDim.new(0, 4)
+local MenuStroke = Instance.new("UIStroke", DropMenu)
+MenuStroke.Color = Color3.fromRGB(60, 60, 60)
+
+local MenuLayout = Instance.new("UIListLayout", DropMenu)
+MenuLayout.Padding = UDim.new(0, 1)
+
+local function AlignDropdown()
+    DropMenu.Position = UDim2.new(0, DropBtn.AbsolutePosition.X, 0, DropBtn.AbsolutePosition.Y + DropBtn.AbsoluteSize.Y + 5)
+end
+DropBtn:GetPropertyChangedSignal("AbsolutePosition"):Connect(AlignDropdown)
+
+local function AddMode(name)
+    local btn = Instance.new("TextButton", DropMenu)
+    btn.Size = UDim2.new(1, 0, 0, 22)
+    btn.BackgroundTransparency = 1
+    btn.Text = "  " .. name
+    btn.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+    btn.Font = Enum.Font.SourceSans
+    btn.TextSize = 13
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.ZIndex = 16
 
     btn.MouseButton1Click:Connect(function()
-        for _, frame in pairs(tabContents) do frame.Visible = false end
-        content.Visible = true
-        for _, b in pairs(tabBar:GetChildren()) do
-            if b:IsA("TextButton") then b.BackgroundColor3 = Color3.fromRGB(35, 35, 50) end
-        end
-        btn.BackgroundColor3 = Color3.fromRGB(60, 60, 100)
+        Config.AimbotMode = name
+        DropBtn.Text = name .. "  ▼"
+        DropMenu.Visible = false
     end)
 end
 
--- Draggable GUI
-local dragging, dragStart, startPos
-mainFrame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = mainFrame.Position
+AddMode("None")
+AddMode("Khác team")
+AddMode("Mọi người")
+AddMode("Bot")
+
+DropBtn.MouseButton1Click:Connect(function()
+    AlignDropdown()
+    DropMenu.Visible = not DropMenu.Visible
+end)
+
+local function AddToggleRow(labelText, isBold, configKey)
+    local frame = Instance.new("Frame", Content)
+    frame.Size = UDim2.new(1, 0, 0, 24)
+    frame.BackgroundTransparency = 1
+
+    local box = Instance.new("TextButton", frame)
+    box.Size = UDim2.new(0, 14, 0, 14)
+    box.Position = UDim2.new(0, 0, 0.5, -7)
+    box.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+    box.BorderSizePixel = 0
+    box.Text = ""
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+    box.BackgroundTransparency = 0.8
+
+    local lbl = Instance.new("TextLabel", frame)
+    lbl.Text = labelText
+    lbl.TextColor3 = Color3.new(1, 1, 1)
+    lbl.Font = isBold and Enum.Font.SourceSansBold or Enum.Font.SourceSans
+    lbl.TextSize = 14
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Size = UDim2.new(1, -20, 1, 0)
+    lbl.Position = UDim2.new(0, 20, 0, 0)
+    lbl.BackgroundTransparency = 1
+
+    box.MouseButton1Click:Connect(function()
+        Config[configKey] = not Config[configKey]
+        box.BackgroundTransparency = Config[configKey] and 0 or 0.8
+    end)
+    return box
+end
+
+local FOVToggleBox = AddToggleRow("FOV", true, "FOV_Enabled")
+local ESPToggleBox = AddToggleRow("esp", false, "ESP_Enabled")
+local ChamsToggleBox = AddToggleRow("chams", false, "Chams_Enabled")
+
+-- Phím tắt cứng [ trên PC độc lập để bật tắt nhanh Chams
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == Enum.KeyCode.LeftBracket then
+        Config.Chams_Enabled = not Config.Chams_Enabled
+        ChamsToggleBox.BackgroundTransparency = Config.Chams_Enabled and 0 or 0.8
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - dragStart
-        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
+-- Định hình cấu trúc Drawing tương thích đa nhân đồ họa Executor
+local FOVCircle = Drawing.new("Circle")
+local TraceLine = Drawing.new("Line")
 
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-end)
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Thickness = 1.5
+FOVCircle.Filled = false
+FOVCircle.Transparency = 1
+FOVCircle.NumSides = 64
 
--- Toggle GUI with Right Ctrl
-UserInputService.InputBegan:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.RightControl then
-        guivisible = not guivisible
-        mainFrame.Visible = guivisible
-    end
-end)
+TraceLine.Color = Color3.fromRGB(255, 255, 255)
+TraceLine.Thickness = 1.5
+TraceLine.Transparency = 1
+-- === MẠCH KIỂM TRA TƯỜNG RAYCAST (TƯƠNG THÍCH PC & MOBILE CAMERA) ===
+local function IsVisible(targetPart, targetChar)
+    if not targetPart or not targetChar then return false end
+    
+    local origin = Camera.CFrame.Position
+    local direction = targetPart.Position - origin
+    
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, targetChar, Camera}
+    raycastParams.IgnoreWater = true
+    
+    local result = workspace:Raycast(origin, direction, raycastParams)
+    
+    -- Nếu không chạm vật cản bên ngoài -> Kẻ địch hiển thị lộ diện hoàn toàn
+    return result == nil
+end
 
--- Bind phím logic
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if bindingFeature then
-        if input.KeyCode \~= Enum.KeyCode.Unknown then
-            keys[bindingFeature] = input.KeyCode
-            bindingFeature = nil
+-- === THUẬT TOÁN TÌM KIẾM MỤC TIÊU CHUẨN TRONG VÒNG FOV ===
+local function QuetMucTieu()
+    if Config.AimbotMode == "None" then return nil end
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local selectedTarget, closest = nil, Config.FOV_Radius
+
+    if Config.AimbotMode == "Bot" then
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("Head") then
+                if not Players:GetPlayerFromCharacter(obj) and obj.Humanoid.Health > 0 then
+                    local head = obj.Head
+                    local pos, onScreen = Camera:WorldToViewportPoint(head.Position)
+                    if onScreen then
+                        if IsVisible(head, obj) then
+                            local sizeDist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                            if sizeDist < closest then closest = sizeDist selectedTarget = head end
+                        end
+                    end
+                end
+            end
         end
-        return
+    else
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("Head") and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
+                local checkTeam = (Config.AimbotMode == "Mọi người") or (Config.AimbotMode == "Khác team" and p.Team ~= LocalPlayer.Team)
+                if checkTeam then
+                    local head = p.Character.Head
+                    local pos, onScreen = Camera:WorldToViewportPoint(head.Position)
+                    if onScreen then
+                        if IsVisible(head, p.Character) then
+                            local sizeDist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                            if sizeDist < closest then closest = sizeDist selectedTarget = head end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return selectedTarget
+end
+
+-- === VÒNG LẶP LIÊN TỤC RENDER BẢN VẼ FOV & LINE TRẮNG TOÀN DIỆN ===
+RunService.RenderStepped:Connect(function()
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    
+    -- Khóa chặt tâm vòng tròn FOV chuẩn xác giữa màn hình máy tính/điện thoại
+    FOVCircle.Position = center
+    FOVCircle.Radius = Config.FOV_Radius
+    FOVCircle.Visible = Config.FOV_Enabled 
+
+    if Config.Aimbot_Enabled then
+        local targetHead = QuetMucTieu()
+        if targetHead then
+            if CurrentTarget == nil or (targetHead ~= CurrentTarget and os.clock() - TargetStartTime >= Config.SwitchDelay) then
+                if targetHead ~= CurrentTarget then TargetStartTime = os.clock() end
+                CurrentTarget = targetHead
+            end
+        else
+            CurrentTarget = nil
+        end
+
+        if CurrentTarget and CurrentTarget.Parent then
+            Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, CurrentTarget.Position), Config.SnapSpeed)
+            
+            local screenPos, targetOnScreen = Camera:WorldToViewportPoint(CurrentTarget.Position)
+            if targetOnScreen then
+                TraceLine.From = center
+                TraceLine.To = Vector2.new(screenPos.X, screenPos.Y)
+                TraceLine.Visible = true
+            else
+                TraceLine.Visible = false
+            end
+        else
+            TraceLine.Visible = false
+        end
+    else
+        TraceLine.Visible = false
+    end
+end)
+
+-- === KHỞI TẠO MẢNG DRAWING CHO SIÊU ESP ĐỎ KHÔNG GIỚI HẠN ===
+local function createESP(player)
+    if player == LocalPlayer then return end
+    if ESP_Data[player] then return end
+    
+    local data = {
+        L1 = Drawing.new("Line"), L2 = Drawing.new("Line"), 
+        L3 = Drawing.new("Line"), L4 = Drawing.new("Line"),
+        Health = Drawing.new("Line"),
+        Tracer = Drawing.new("Line")
+    }
+
+    for _, line in pairs(data) do
+        line.Thickness = 1.5
+        line.Color = Color3.fromRGB(255, 0, 0)
+        line.Transparency = 1
+        line.Visible = false
+    end
+    data.Health.Thickness = 2 
+
+    ESP_Data[player] = data
+end
+-- === VÒNG LẶP RENDER CẬP NHẬT SIÊU ESP ĐỎ (VÔ HẠN KHOẢNG CÁCH) ===
+local function updateESP()
+    for _, player in pairs(Players:GetPlayers()) do
+        local data = ESP_Data[player]
+        if not data then 
+            if player ~= LocalPlayer then createESP(player) end 
+            continue 
+        end
+
+        local char = player.Character
+        -- Không giới hạn khoảng cách, xa bao nhiêu vẫn hiện khung đỏ
+        if Config.ESP_Enabled and char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
+            local root = char.HumanoidRootPart
+            local hum = char.Humanoid
+            local pos, onScreen = Camera:WorldToViewportPoint(root.Position)
+
+            if onScreen then
+                local head = char:FindFirstChild("Head")
+                if head then
+                    local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+                    local legPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+                    
+                    local h = math.abs(headPos.Y - legPos.Y)
+                    local w = h / 2
+                    local x, y = pos.X - w/2, pos.Y - h/2
+
+                    -- Box Khung vuông Đỏ
+                    data.L1.From = Vector2.new(x, y)
+                    data.L1.To = Vector2.new(x + w, y)
+                    data.L2.From = Vector2.new(x + w, y)
+                    data.L2.To = Vector2.new(x + w, y + h)
+                    data.L3.From = Vector2.new(x + w, y + h)
+                    data.L3.To = Vector2.new(x, y + h)
+                    data.L4.From = Vector2.new(x, y + h)
+                    data.L4.To = Vector2.new(x, y)
+
+                    -- Thanh máu sát rạt box (cách đúng 2 pixel)
+                    local healthX = x - 2 
+                    data.Health.From = Vector2.new(healthX, y + h)
+                    data.Health.To = Vector2.new(healthX, y + h - (h * (hum.Health / hum.MaxHealth)))
+                    data.Health.Color = Color3.fromRGB(255, 0, 0) 
+
+                    -- Tracer từ đáy box thẳng xuống đáy giữa màn hình
+                    data.Tracer.From = Vector2.new(x + w/2, y + h)
+                    data.Tracer.To = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+
+                    for _, line in pairs(data) do line.Visible = true end
+                else
+                    for _, line in pairs(data) do line.Visible = false end
+                end
+            else
+                for _, line in pairs(data) do line.Visible = false end
+            end
+        else
+            for _, line in pairs(data) do line.Visible = false end
+        end
+    end
+end
+
+RunService.RenderStepped:Connect(updateESP)
+
+-- === MẠCH ĐIỀU KHIỂN CHAMS KHỐI ĐẶC 20% MÀU ===
+local function GetPlayerColor(Player)
+    if Player.Team then return Player.TeamColor.Color end
+    if Player.TeamColor ~= BrickColor.new("White") and Player.TeamColor ~= BrickColor.new("Medium stone grey") then
+        return Player.TeamColor.Color
+    end
+    return Color3.fromRGB(0, 255, 0)
+end
+
+local function GetEquippedTool(Character)
+    local Tool = Character:FindFirstChildOfClass("Tool")
+    return Tool and Tool.Name or "None"
+end
+
+local function ApplyChams(Player)
+    if Player == LocalPlayer then return end
+
+    local function Setup(Character)
+        local Root = Character:WaitForChild("HumanoidRootPart", 15)
+        local Head = Character:WaitForChild("Head", 15)
+        if not Root or not Head then return end
+
+        if Root:FindFirstChild("BéBoxFill") then Root["BéBoxFill"]:Destroy() end
+        local Box = Instance.new("BoxHandleAdornment")
+        Box.Name = "BéBoxFill"
+        Box.Parent = Root
+        Box.Adornee = Root
+        Box.AlwaysOnTop = true
+        Box.ZIndex = 5
+        Box.Size = Vector3.new(4, 6, 4)
+        Box.Transparency = Config.FillTransparency
+
+        if Head:FindFirstChild("BéInfoTag") then Head["BéInfoTag"]:Destroy() end
+        local Gui = Instance.new("BillboardGui")
+        Gui.Name = "BéInfoTag"
+        Gui.Adornee = Head
+        Gui.Size = UDim2.new(0, 200, 0, 100)
+        Gui.StudsOffset = Vector3.new(0, 4, 0)
+        Gui.AlwaysOnTop = true
+
+        local Label = Instance.new("TextLabel", Gui)
+        Label.Size = UDim2.new(1, 0, 1, 0)
+        Label.BackgroundTransparency = 1
+        Label.Font = Enum.Font.Code
+        Label.TextSize = 14
+        Label.TextStrokeTransparency = 0
+        Label.TextColor3 = Color3.new(1, 1, 1)
+        Gui.Parent = Head
+
+        local Connection
+        Connection = RunService.RenderStepped:Connect(function()
+            if not Character.Parent or not Root.Parent or not Head.Parent then
+                Connection:Disconnect()
+                if Gui then Gui:Destroy() end
+                return
+            end
+
+            local Hum = Character:FindFirstChild("Humanoid")
+            if Config.Chams_Enabled and Hum and Hum.Health > 0 then
+                local color = GetPlayerColor(Player)
+                local dist = math.floor((Root.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude)
+                local teamName = Player.Team and Player.Team.Name or "No Team"
+                local toolName = GetEquippedTool(Character)
+
+                Box.Visible = true
+                Box.Color3 = color
+
+                Label.Visible = true
+                Label.TextColor3 = color
+                Label.Text = string.format("%s (%dm)\n(%s)(%s)", Player.Name, dist, teamName, toolName)
+                
+                Gui.Enabled = (dist <= 500)
+            else
+                Box.Visible = false
+                Label.Visible = false
+            end
+        end)
     end
 
-    if input.KeyCode == keys.Fly and states.Fly then toggleFly(not states.Fly); states.Fly = not states.Fly end
-    if input.KeyCode == keys.Noclip and states.Noclip then toggleNoclip(not states.Noclip); states.Noclip = not states.Noclip end
-    if input.KeyCode == keys.Aimbot and states.Aimbot then aiming = not aiming end
-    if input.KeyCode == keys.KillAura and states.KillAura then toggleKillAura(not states.KillAura); states.KillAura = not states.KillAura end
-    if input.KeyCode == keys.Speed and states.Speed then toggleSpeed(not states.Speed); states.Speed = not states.Speed end
-    if input.KeyCode == keys.Illusion and states.Illusion then toggleIllusion(not states.Illusion); states.Illusion = not states.Illusion end
-end)
+    Player.CharacterAdded:Connect(Setup)
+    if Player.Character then Setup(Player.Character) end
+end
 
-UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode == keys.Aimbot then aiming = false; lockHighlight.Visible = false end
-end)
-
--- Lệnh chat
-local prefix = "."
-local chatCommands = {
-    fly = function() states.Fly = not states.Fly; toggleFly(states.Fly); notify("Fly", states.Fly and "ON" or "OFF", 2) end,
-    noclip = function() states.Noclip = not states.Noclip; toggleNoclip(states.Noclip); notify("Noclip", states.Noclip and "ON" or "OFF", 2) end,
-    esp = function() states.ESP = not states.ESP; notify("ESP", states.ESP and "ON" or "OFF", 2) end,
-    aimbot = function() states.Aimbot = not states.Aimbot; fovCircle.Visible = states.Aimbot; notify("Aimbot", states.Aimbot and "ON" or "OFF", 2) end,
-    killaura = function() states.KillAura = not states.KillAura; toggleKillAura(states.KillAura); notify("KillAura", states.KillAura and "ON" or "OFF", 2) end,
-    speed = function() states.Speed = not states.Speed; toggleSpeed(states.Speed); notify("Speed", states.Speed and "ON" or "OFF", 2) end,
-    illusion = function() states.Illusion = not states.Illusion; toggleIllusion(states.Illusion); notify("Illusion", states.Illusion and "ON" or "OFF", 2) end,
-    help = function() notify("Commands", ".fly .noclip .esp .aimbot .killaura .speed .illusion .help", 5) end
-}
-
-player.Chatted:Connect(function(msg)
-    if msg:sub(1,1) == prefix then
-        local cmd = msg:sub(2):lower()
-        if chatCommands[cmd] then chatCommands[cmd]() end
+-- === VẬN HÀNH TOÀN BỘ HỆ THỐNG ===
+Players.PlayerRemoving:Connect(function(player)
+    if ESP_Data[player] then
+        for _, line in pairs(ESP_Data[player]) do line:Remove() end
+        ESP_Data[player] = nil
     end
 end)
 
-print("WangScript v2.4 FULL loaded! Right Ctrl mở GUI.")
+Players.PlayerAdded:Connect(function(p)
+    createESP(p)
+    ApplyChams(p)
+end)
+
+for _, v in pairs(Players:GetPlayers()) do 
+    createESP(v) 
+    ApplyChams(v)
+end
+
+print("--- [Wangcaos Engine V6 Dual PC/Mobile Cross-Platform Loaded!] ---")
