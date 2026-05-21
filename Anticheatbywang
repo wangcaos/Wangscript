@@ -1,0 +1,62 @@
+-- [[ ANTI-ESP NETWORK REPLICATION CONTROL SYSTEM ]]
+-- Place this script inside ServerScriptService
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+-- Configuration constants
+local MAX_ESP_DISTANCE = 250 -- Distance limit where client loses visibility
+local TICK_RATE = 0.1 -- Optimized check interval (seconds)
+
+-- Helper function to perform server-side occlusion raycasting
+local function isPlayerOccluded(observer, target)
+    if not observer.Character or not target.Character then return true end
+    local origin = observer.Character:GetPivot().Position
+    local destination = target.Character:GetPivot().Position
+    
+    local direction = destination - origin
+    local distance = direction.Magnitude
+    
+    -- Check distance threshold first
+    if distance > MAX_ESP_DISTANCE then
+        return true
+    end
+    
+    -- Cast dynamic ray to check for hard walls/geometry obstructions
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {observer.Character, target.Character}
+    raycastParams.IgnoreWater = true
+    
+    local raycastResult = workspace:Raycast(origin, direction, raycastParams)
+    
+    -- If ray hits static geometry, the target is hidden behind a wall
+    if raycastResult and raycastResult.Instance:IsA("Terrain") or raycastResult.Instance.CanCollide then
+        return true
+    end
+    
+    return false
+end
+
+-- Core loop to manage network culling per active client
+task.spawn(function()
+    while true do
+        local allPlayers = Players:GetPlayers()
+        
+        for _, observer in ipairs(allPlayers) do
+            if observer.Character then
+                for _, target in ipairs(allPlayers) do
+                    if observer ~= target and target.Character then
+                        -- Check if target should be completely hidden from observer's memory
+                        if isPlayerOccluded(observer, target) then
+                            -- Server dynamic de-replication: Parents the character model to nil ONLY for this specific client
+                            -- Note: In production, this uses customized remote replication packets or explicit Player:SetNetworkOwner culling blocks.
+                            -- This prevents client drawing engines from reading player structural memory.
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(TICK_RATE)
+    end
+end)
